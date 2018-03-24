@@ -25,21 +25,21 @@ has parent      => is => 'ro', isa => 'PUrl', required => 1, coerce => 1;
 has bind_host   => is => 'ro', isa => 'Maybe[Str]', default => '127.0.0.1';
 has bind_port   => is => 'ro', isa => 'Str', default => '2004';
 has lag         => is => 'ro', isa => 'Int', default => 5;
+has tcp_timeout => is => 'ro', isa => 'Num', default => 1;
 
-
-has started     => is => 'rw', isa => 'Bool', default => 0;
-
+has _started    => is => 'rw', isa => 'Bool', default => 0;
 has _tcp        => is => 'rw', isa => 'Maybe[Object]';
 has _udp        => is => 'rw', isa => 'Maybe[Object]';
 
 has _workers    => is => 'ro', isa => 'HashRef', default => sub {{}};
 
+
 sub start {
     my ($self) = @_;
-    croak 'Server is already started' if $self->started;
+    croak 'Server is already _started' if $self->_started;
 
 
-    $self->started(1);
+    $self->_started(1);
 
 
     DEBUGF 'Creating TCP-server: %s:%s', $self->bind_host, $self->bind_port;
@@ -61,16 +61,25 @@ sub start {
     $self;
 }
 
+
+sub _aggregate {
+    my ($self, $name, $value, $time) = @_;
+}
+
 sub _line_received {
     my ($self, $line, $proto) = @_;
     DEBUGF '%s %s', $proto, $line;
+
+    my $now = int AnyEvent::now();
+    my ($name, $value, $stamp) = split /\s+/, $line, 4;
+    $self->_aggregate($name, $value, $stamp);
 }
 
 
 sub _udp_datagram {
     my ($self) = @_;
     sub {
-        return unless $self->started;
+        return unless $self->_started;
         my ($data, $fh, $client_addr) = @_;
         if (defined $data and length $data) {
             my @lines = split /\n/, $data;
@@ -87,7 +96,7 @@ sub _tcp_client {
     my ($self) = @_;
     sub {
         my ($fh, $host, $port) = @_;
-        unless ($self->started) {
+        unless ($self->_started) {
             DEBUGF 'Client %s:%s connected while server is stopping',
                 $host,
                 $port;
@@ -110,9 +119,9 @@ sub _tcp_client_chat {
 
 
     DEBUGF 'TCP client %s:%s connected', $host, $port;
-    $fh->timeout(.5);
+    $fh->timeout($self->tcp_timeout);;
 
-    while ($self->started) {
+    while ($self->_started) {
         my $line = $fh->readline("\n");
         last unless defined $line;
         next unless length $line;
@@ -121,13 +130,14 @@ sub _tcp_client_chat {
         $self->_line_received($line, "tcp://$host:$port");
     }
 
+    DEBUGF 'TCP client %s:%s was disconnected', $host, $port;
     delete $self->_workers->{$no};
 }
 
 
 sub stop {
     my ($self) = @_;
-    $self->started(0);
+    $self->_started(0);
 
     while (%{ $self->_workers }) {
         my ($fno) = keys %{ $self->_workers };

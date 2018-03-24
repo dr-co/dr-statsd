@@ -1,0 +1,29 @@
+divider: '.'
+aggregate:
+  variants:
+    - suffix: count
+      method: sum
+
+    - suffix: size
+      method: avg
+
+    - suffix: max
+      method: max
+
+    - suffix: min
+      method: min
+  default:
+    method: avg
+
+
+
+network:
+  listen:
+    host: 127.0.0.1
+    port: 2004
+
+  parent:
+      host: gr.rmfr.ru
+      port: 2004
+     proto: udp
+  
