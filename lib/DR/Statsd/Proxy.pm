@@ -13,6 +13,7 @@ use Coro::AnyEvent;
 use Coro::Handle;
 use AnyEvent::Handle::UDP;
 use Mouse::Util::TypeConstraints;
+use Scalar::Util 'looks_like_number';
 
 subtype PUrl => as 'URI';
 
@@ -32,6 +33,8 @@ has _tcp        => is => 'rw', isa => 'Maybe[Object]';
 has _udp        => is => 'rw', isa => 'Maybe[Object]';
 
 has _workers    => is => 'ro', isa => 'HashRef', default => sub {{}};
+
+has _list       => is => 'ro', isa => 'ArrayRef', default => sub {[]};
 
 
 sub start {
@@ -63,16 +66,19 @@ sub start {
 
 
 sub _aggregate {
-    my ($self, $name, $value, $time) = @_;
+    my ($self, $name, $value, $time, $proto) = @_;
+    push @{ $self->_list } => [ $name, $value, $time, $proto ];
 }
 
 sub _line_received {
     my ($self, $line, $proto) = @_;
-    DEBUGF '%s %s', $proto, $line;
-
     my $now = int AnyEvent::now();
     my ($name, $value, $stamp) = split /\s+/, $line, 4;
-    $self->_aggregate($name, $value, $stamp);
+
+    return unless looks_like_number $stamp;
+    return unless looks_like_number $value;
+    return unless length $name;
+    $self->_aggregate($name, $value, $stamp, $proto);
 }
 
 

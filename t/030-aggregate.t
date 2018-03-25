@@ -38,14 +38,21 @@ isa_ok $s => DR::Statsd::Proxy::, 'instance created';
 ok $s->start, 'started';
         
 
-my $sc = IO::Socket::INET->new(
+my $us = IO::Socket::INET->new(
             PeerAddr    => '127.0.0.1',
             PeerPort    => $port,
             Proto       => 'tcp',
         );
 diag $! unless
-    ok $sc, 'connected';
+    ok $us, 'connected';
 
+my $ts = IO::Socket::INET->new(
+            PeerAddr    => '127.0.0.1',
+            PeerPort    => $port,
+            Proto       => 'udp',
+        );
+diag $! unless
+    ok $ts, 'connected';
 
 no warnings 'redefine';
 
@@ -57,5 +64,16 @@ sub DR::Statsd::Proxy::_aggregate {
 
 
 
-ok $s->stop, 'stopped';
+my $now = time;
 
+ok $us->send("test.a.b.c 123 $now\n"), 'send udp 1';
+ok $us->send("test.a.b.c 124 $now"), 'send udp 2';
+ok $ts->print("test.c.d.e 123 $now\n"), 'send tcp 1';
+ok $ts->print("test.c.d.e 124 $now\n"), 'send tcp 2';
+close $ts;
+
+Coro::AnyEvent::sleep 1.5;
+
+note explain \@metrics;
+
+ok $s->stop, 'stopped';
