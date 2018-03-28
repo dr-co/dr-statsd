@@ -14,6 +14,7 @@ use Coro::Handle;
 use AnyEvent::Handle::UDP;
 use Mouse::Util::TypeConstraints;
 use Scalar::Util 'looks_like_number';
+use Errno qw(EINTR EAGAIN);
 
 subtype PUrl => as 'URI';
 
@@ -91,7 +92,7 @@ sub _udp_datagram {
             my @lines = split /\n/, $data;
             for (@lines) {
                 s/\s+$//s;
-                $self->_line_received($_, "udp://$client_addr");
+                $self->_line_received($_, 'udp');
             }
         }
     }
@@ -129,12 +130,19 @@ sub _tcp_client_chat {
 
     while ($self->_started) {
         my $line = $fh->readline("\n");
-        last unless defined $line;
-        next unless length $line;
+        unless (defined $line) {
+            next if $! == EAGAIN;
+            last;
+        }
+        unless (length $line) {
+            next;
+        }
 
         $line =~ s/\s+$//s;
-        $self->_line_received($line, "tcp://$host:$port");
+        $self->_line_received($line, 'tcp');
     }
+
+    $fh->close;
 
     DEBUGF 'TCP client %s:%s was disconnected', $host, $port;
     delete $self->_workers->{$no};

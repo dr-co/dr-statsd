@@ -6,7 +6,7 @@ use utf8;
 use open qw(:std :utf8);
 use lib qw(lib ../lib t/lib);
 
-use Test::More tests    => 1;
+use Test::More tests    => 18;
 use Encode qw(decode encode);
 
 
@@ -41,18 +41,18 @@ ok $s->start, 'started';
 my $us = IO::Socket::INET->new(
             PeerAddr    => '127.0.0.1',
             PeerPort    => $port,
-            Proto       => 'tcp',
+            Proto       => 'udp',
         );
 diag $! unless
-    ok $us, 'connected';
+    ok $us, 'UDP connected';
 
 my $ts = IO::Socket::INET->new(
             PeerAddr    => '127.0.0.1',
             PeerPort    => $port,
-            Proto       => 'udp',
+            Proto       => 'tcp',
         );
 diag $! unless
-    ok $ts, 'connected';
+    ok $ts, 'TCP connected';
 
 no warnings 'redefine';
 
@@ -66,14 +66,27 @@ sub DR::Statsd::Proxy::_aggregate {
 
 my $now = time;
 
-ok $us->send("test.a.b.c 123 $now\n"), 'send udp 1';
-ok $us->send("test.a.b.c 124 $now"), 'send udp 2';
-ok $ts->print("test.c.d.e 123 $now\n"), 'send tcp 1';
-ok $ts->print("test.c.d.e 124 $now\n"), 'send tcp 2';
-close $ts;
+ok $us->send("udp.a.b.c 123 $now"), 'send udp 1';
+ok $us->send("udp.a.b.c 124 $now"), 'send udp 2';
+ok $ts->print("tcp.c.d.e 123 $now\n"), 'send tcp 1';
+ok $ts->print("tcp.c.d.e 124 $now\n"), 'send tcp 2';
+$ts->close;
 
-Coro::AnyEvent::sleep 1.5;
+Coro::AnyEvent::sleep .2;
 
-note explain \@metrics;
+is @metrics, 4, 'aggregate size';
+my @tcp = grep { $_->[-1] eq 'tcp'  } @metrics;
+my @udp = grep { $_->[-1] eq 'udp'  } @metrics;
 
-ok $s->stop, 'stopped';
+is_deeply \@tcp,
+    [
+        [ 'tcp.c.d.e', 123, $now, 'tcp' ],
+        [ 'tcp.c.d.e', 124, $now, 'tcp' ],
+    ], 'tcp';
+
+is_deeply \@udp,
+    [
+        [ 'udp.a.b.c', 123, $now, 'udp' ],
+        [ 'udp.a.b.c', 124, $now, 'udp' ],
+    ], 'udp';
+
