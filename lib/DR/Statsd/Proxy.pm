@@ -15,28 +15,41 @@ use AnyEvent::Handle::UDP;
 use Mouse::Util::TypeConstraints;
 use Scalar::Util 'looks_like_number';
 use Errno qw(EINTR EAGAIN);
+use DR::Statsd::Proxy::Agg::Acl;
+use DR::Statsd::Proxy::Agg;
+use IO::Socket;
+use IO::Socket::INET;
+use Socket;
 
-subtype PUrl => as 'URI';
-
-coerce PUrl =>
-    from    'Str',
-    via     { URI->new($_) };
+has parent_host     => is => 'ro', isa => 'Str', default => '127.0.0.1';
+has parent_port     => is => 'ro', isa => 'Str', default => 2003;
+has parent_lag      => is => 'ro', isa => 'Int', default => 5;
 
 
-has parent      => is => 'ro', isa => 'PUrl', required => 1, coerce => 1;
-has bind_host   => is => 'ro', isa => 'Maybe[Str]', default => '127.0.0.1';
-has bind_port   => is => 'ro', isa => 'Str', default => '2004';
-has lag         => is => 'ro', isa => 'Int', default => 5;
-has tcp_timeout => is => 'ro', isa => 'Num', default => 1;
 
-has _started    => is => 'rw', isa => 'Bool', default => 0;
-has _tcp        => is => 'rw', isa => 'Maybe[Object]';
-has _udp        => is => 'rw', isa => 'Maybe[Object]';
 
-has _workers    => is => 'ro', isa => 'HashRef', default => sub {{}};
+has bind_host       => is => 'ro', isa => 'Maybe[Str]', default => '127.0.0.1';
+has bind_port       => is => 'ro', isa => 'Str', default => '2004';
+has tcp_timeout     => is => 'ro', isa => 'Num', default => 1;
 
-has _list       => is => 'ro', isa => 'ArrayRef', default => sub {[]};
+has acls            =>
+    is      => 'ro',
+    isa     => 'ArrayRef[DR::Statsd::Proxy::Agg::Acl]',
+    default => sub {[]};
 
+has agg             =>
+    is      => 'ro',
+    isa     => 'HashRef[DR::Statsd::Proxy::Agg]',
+    default => sub {{}};
+
+
+
+has _started        => is => 'rw', isa => 'Bool', default => 0;
+has _tcp            => is => 'rw', isa => 'Maybe[Object]';
+has _udp            => is => 'rw', isa => 'Maybe[Object]';
+has _workers        => is => 'ro', isa => 'HashRef', default => sub {{}};
+has _list           => is => 'ro', isa => 'ArrayRef', default => sub {[]};
+has _fh             => is => 'rw', isa => 'Maybe[Object]';
 
 sub start {
     my ($self) = @_;
@@ -62,13 +75,16 @@ sub start {
 
     $self->_udp($udp);
 
+    $self->_pusher;
+
     $self;
 }
 
 
 sub _aggregate {
     my ($self, $name, $value, $time, $proto) = @_;
-    push @{ $self->_list } => [ $name, $value, $time, $proto ];
+    my $now = AnyEvent::now();
+    push @{ $self->_list } => [ $now, [ $name, $value, $time ] ];
 }
 
 sub _line_received {
@@ -98,7 +114,6 @@ sub _udp_datagram {
     }
 }
 
-
 sub _tcp_client {
     my ($self) = @_;
     sub {
@@ -124,8 +139,6 @@ sub _tcp_client {
 sub _tcp_client_chat {
     my ($self, $fh, $host, $port, $no) = @_;
 
-
-    DEBUGF 'TCP client %s:%s connected', $host, $port;
     $fh->timeout($self->tcp_timeout);;
 
     while ($self->_started) {
@@ -144,10 +157,67 @@ sub _tcp_client_chat {
 
     $fh->close;
 
-    DEBUGF 'TCP client %s:%s was disconnected', $host, $port;
     delete $self->_workers->{$no};
 }
 
+sub _pusher {
+    my ($self) = @_;
+    $self->_workers->{0} = async {
+        DEBUGF 'Pusher started';
+        my $started = AnyEvent::now();
+        while ($self->_started) {
+            Coro::AnyEvent::sleep 0.1;
+            my $now = AnyEvent::now();
+            next if $now - $started < 1;
+            $started = $now;
+            $self->_flush(0);
+        }
+        $self->_flush(1);
+        DEBUGF 'Pusher was done';
+    };
+}
+
+sub _flush {
+    my ($self, $force) = @_;
+
+    return unless @{ $self->_list };
+    my $to = AnyEvent::now();
+    if ($force) {
+        $to += 1_000_000;
+    } else {
+        $to -= $self->parent_lag;
+    }
+
+    while (@{ $self->_list }) {
+        my $f = $self->_list->[0];
+        last unless $to >= $f->[0];
+
+        $f = shift(@{ $self->_list })->[1];
+
+
+        my $method;
+        for my $acl (@{ $self->acls }) {
+            $method = $acl->pass($f->[0]);
+            last if $method;
+        }
+        next unless $method;
+
+        my $agg = $self->agg->{$method};
+
+        unless ($agg) {
+            $agg = $self->agg->{$method} =
+                new DR::Statsd::Proxy::Agg type => $method;
+        }
+
+        $agg->put(@$f);
+    }
+
+    for my $agg (values %{ $self->agg }) {
+        my $list = $agg->flush;
+        $self->_send_parent($list);
+    }
+    
+}
 
 sub stop {
     my ($self) = @_;
@@ -159,5 +229,50 @@ sub stop {
         $coro->join;
     }
     $self;
+}
+
+sub _send_parent {
+    my ($self, $list) = @_;
+    return unless @$list;
+    unless ($self->_fh) {
+        my $fh = new IO::Socket::INET
+                        PeerPort        => $self->parent_port,
+                        PeerHost        => $self->parent_host,
+                        Proto           => 'udp';
+        unless ($fh) {
+            my $e = $!;
+            utf8::decode $e unless utf8::is_utf8 $e;
+            die "Can not connect to parent: $e";
+        }
+        $self->_fh($fh);
+    }
+    SEND: while (@$list) {
+        my $pkt = '';
+        while (length($pkt) < 3800) {
+
+            my $m = shift @$list;
+            last unless defined $m;
+            $pkt .= sprintf "%s %s %s\n", @$m;
+        }
+
+        last unless length $pkt;
+        $self->_fh->send($pkt);
+    }
+}
+
+sub wait_signal {
+    my ($self) = @_;
+    my $coro;
+    local $SIG{INT} = sub {
+        DEBUGF 'INT signal';
+        $coro->ready if $coro;
+    };
+    local $SIG{TERM} = sub {
+        DEBUGF 'TERM signal';
+        $coro->ready if $coro;
+    };
+    $coro = $Coro::current;
+    Coro::schedule;
+    undef $coro;
 }
 __PACKAGE__->meta->make_immutable;

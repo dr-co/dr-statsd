@@ -6,7 +6,7 @@ use utf8;
 use open qw(:std :utf8);
 use lib qw(lib ../lib t/lib);
 
-use Test::More tests    => 18;
+use Test::More tests    => 19;
 use Encode qw(decode encode);
 
 
@@ -90,3 +90,5 @@ is_deeply \@udp,
         [ 'udp.a.b.c', 124, $now, 'udp' ],
     ], 'udp';
 
+
+ok $s->stop, 'stopped';

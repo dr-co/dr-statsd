@@ -1,29 +1,41 @@
-divider: '.'
-aggregate:
-  variants:
-    - suffix: count
-      method: sum
+acl:
+# набор правил
+  - type:     suffix
+    value:    count
+    method:   sum
+    divider:  '.'
 
-    - suffix: size
-      method: avg
+  - type:     suffix
+    value:    size
+    method:   avg
+    divider:  '.'
 
-    - suffix: max
-      method: max
+  - type:     suffix
+    value:    max
+    method:   max
+    divider:  '.'
 
-    - suffix: min
-      method: min
-  default:
-    method: avg
+  - type:     suffix
+    value:    min
+    method:   min
+    divider:  '.'
 
 
+  - type:     default
+    method:   avg
 
 network:
   listen:
-    host: 127.0.0.1
+    # где слушаем
+    host: 0.0.0.0
     port: 2004
 
   parent:
-      host: gr.rmfr.ru
-      port: 2004
-     proto: udp
+      # подключение родителя
+      host: 127.0.0.1
+      port: 2003
+      # с каким лагом слать
+      lag: 5
   
+log:
+  facility: 'local7'

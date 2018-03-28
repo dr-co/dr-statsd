@@ -1,0 +1,96 @@
+#!/usr/bin/perl
+
+use warnings;
+use strict;
+
+use utf8;
+use open qw(:std :utf8);
+
+use YAML;
+use Getopt::Long;
+use Data::Dumper;
+use Scalar::Util 'looks_like_number';
+use lib qw(lib);
+sub help();
+sub run();
+
+help unless
+    GetOptions
+        'h'             => \my $help,
+        'v'             => \my $verbose,
+        'c|config=s'    => \my $cfg;
+
+help if $help;
+
+die "Config file is not defined\n" unless $cfg;
+die "Config file `$cfg` is not readable" unless -r $cfg;
+
+$ENV{DEBUG} = 1 if $verbose;
+
+run;
+
+
+
+sub run() {
+    require DR::Statsd::Proxy::Debug;
+    no warnings 'once';
+    $DR::Statsd::Proxy::Debug::VERBOSE = 1 if $verbose;
+
+    my $c = eval { YAML::LoadFile($cfg) };
+    die "Config file is not a YAML file\n" unless 'HASH' eq ref $c;
+
+    $DR::Statsd::Proxy::Debug::FACILITY = $c->{log}{facility}
+        if $c->{log}{facility};
+
+    DR::Statsd::Proxy::Debug->import;
+
+
+    my $listen = $c->{network}{listen};
+    my $parent = $c->{network}{parent};
+
+    die "network.listen.{host,port} have to be defined\n"
+        unless $listen->{host} and $listen->{port};
+    die "network.parent.{host,port} have to be defined\n"
+        unless $parent->{host} and $parent->{port};
+
+
+    require DR::Statsd::Proxy;
+    DR::Statsd::Proxy->import;
+
+    my $dcfg = {
+        parent_host => $parent->{host},
+        parent_port => $parent->{port},
+        parent_lag  => $parent->{lag} // 10,
+        bind_host   => $listen->{host},
+        bind_port   => $listen->{port},
+    };
+
+
+    require DR::Statsd::Proxy::Agg::Acl;
+
+    my @acls;
+    for (@{ $c->{acl} }) {
+        push @acls => new DR::Statsd::Proxy::Agg::Acl $_;
+    }
+    $dcfg->{acls} = \@acls;
+    
+
+    my $daemon = DR::Statsd::Proxy->new($dcfg);
+    $daemon->start;
+    $daemon->wait_signal;
+    $daemon->stop;
+}
+
+
+
+
+
+sub help() {
+    print <<eof;
+Usage: $0 [OPTIONS] -c config.yml
+
+    -h - the help screen
+    -v - show syslog messages
+
+eof
+}
