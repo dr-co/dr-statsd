@@ -87,17 +87,39 @@ sub start {
 
 sub _aggregate {
     my ($self, $name, $value, $time, $proto) = @_;
-    my $now = AnyEvent::now();
-    $now = int $now;
+    
     if ($self->truncate_timestamp) {
         $time = int $time;
         $time -= $time % $self->truncate_timestamp;
-
-        $now = int $now;
-        $now -= $now % $self->truncate_timestamp;
     }
-    #my $now = $time;
-    push @{ $self->_list } => [ $now, [ $name, $value, $time ] ];
+    
+    # двоичным поиском вставляем
+    my ($first, $last) = (0, $#{ $self->_list });
+
+    while ($last > $first) {
+        if ($time >= $self->_list->[$last][0]) {
+            push @{ $self->_list } => [ $time, [ $name, $value, $time ] ];
+            return;
+        }
+        if ($time <= $self->_list->[$first][0]) {
+            unshift @{ $self->_list } => [ $time, [ $name, $value, $time ] ];
+            return;
+        }
+        if ($last - $first == 1) {
+            splice @{ $self->_list }, 1, 1, [ $time, [ $name, $value, $time ] ];
+            return;
+        }
+
+        my $m = int(($last + $first) / 2);
+
+        if ($time < $self->_list->[$m][0]) {
+            $last = $m;
+        } else {
+            $first = $m;
+        }
+    }
+
+    push @{ $self->_list } => [ $time, [ $name, $value, $time ] ];
 }
 
 sub _line_received {
@@ -203,13 +225,12 @@ sub _flush {
         $to -= $self->truncate_timestamp;
     }
 
-    while (@{ $self->_list }) {
-        my $f = $self->_list->[0];
-        last unless $f->[0] <= $to;
-
-        $f = shift(@{ $self->_list })->[1];
-
-
+    my $count = 0;
+    for (@{ $self->_list }) {
+        last if $_->[0] > $to;
+        $count++;
+        my $f = $_->[1];
+        
         my $method;
         for my $acl (@{ $self->acls }) {
             $method = $acl->pass($f->[0]);
@@ -226,6 +247,9 @@ sub _flush {
 
         $agg->put(@$f);
     }
+
+    # удаляем обработанные
+    splice @{ $self->_list }, 0, $count if $count;
 
     for my $agg (values %{ $self->agg }) {
         my $list = $agg->flush;
