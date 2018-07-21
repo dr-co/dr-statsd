@@ -88,6 +88,7 @@ sub start {
 sub _aggregate {
     my ($self, $name, $value, $time, $proto) = @_;
     my $now = AnyEvent::now();
+    $now = int $now;
     if ($self->truncate_timestamp) {
         $time = int $time;
         $time -= $time % $self->truncate_timestamp;
@@ -194,6 +195,7 @@ sub _flush {
 
     return unless @{ $self->_list };
     my $to = AnyEvent::now();
+    $to = int $to;
     if ($force) {
         $to += 1_000_000;
     } else {
