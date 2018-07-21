@@ -19,6 +19,7 @@ use DR::Statsd::Proxy::Agg::Acl;
 use DR::Statsd::Proxy::Agg;
 use IO::Socket;
 use IO::Socket::INET;
+use Logd::Client;
 use Socket;
 
 has parent_host     => is => 'ro', isa => 'Str', default => '127.0.0.1';
@@ -261,6 +262,7 @@ sub _send_parent {
 
             my $m = shift @$list;
             last unless defined $m;
+            DEBUGF '%s %s %s', @$m;
             $pkt .= sprintf "%s %s %s\n", @$m;
         }
 
