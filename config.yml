@@ -36,6 +36,9 @@ network:
       port: 2003
       # с каким лагом слать
       lag: 5
+
+      #  к какому timestamp приводить
+      truncate_timestamp: 10
   
 log:
   facility: 'local7'

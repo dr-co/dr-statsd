@@ -24,7 +24,10 @@ use Socket;
 has parent_host     => is => 'ro', isa => 'Str', default => '127.0.0.1';
 has parent_port     => is => 'ro', isa => 'Str', default => 2003;
 has parent_lag      => is => 'ro', isa => 'Int', default => 5;
-
+has truncate_timestamp  =>
+    is      => 'ro',
+    isa     => 'Int',
+    default => 1;
 
 
 
@@ -84,6 +87,10 @@ sub start {
 sub _aggregate {
     my ($self, $name, $value, $time, $proto) = @_;
     my $now = AnyEvent::now();
+    if ($self->truncate_timestamp) {
+        $time = int $time;
+        $time -= $time % $self->truncate_timestamp;
+    }
     push @{ $self->_list } => [ $now, [ $name, $value, $time ] ];
 }
 

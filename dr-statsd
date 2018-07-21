@@ -58,11 +58,12 @@ sub run() {
     DR::Statsd::Proxy->import;
 
     my $dcfg = {
-        parent_host => $parent->{host},
-        parent_port => $parent->{port},
-        parent_lag  => $parent->{lag} // 10,
-        bind_host   => $listen->{host},
-        bind_port   => $listen->{port},
+        parent_host         => $parent->{host},
+        parent_port         => $parent->{port},
+        parent_lag          => $parent->{lag} // 10,
+        bind_host           => $listen->{host},
+        bind_port           => $listen->{port},
+        truncate_timestamp  => $parent->{truncate_timestamp},
     };
 
 
