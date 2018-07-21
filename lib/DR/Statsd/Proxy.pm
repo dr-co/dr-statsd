@@ -19,7 +19,6 @@ use DR::Statsd::Proxy::Agg::Acl;
 use DR::Statsd::Proxy::Agg;
 use IO::Socket;
 use IO::Socket::INET;
-use Logd::Client;
 use Socket;
 
 has parent_host     => is => 'ro', isa => 'Str', default => '127.0.0.1';
@@ -63,7 +62,7 @@ sub start {
     $self->_started(1);
 
 
-    DEBUGF 'Creating TCP-server: %s:%s', $self->bind_host, $self->bind_port;
+    printf 'Creating TCP-server: %s:%s', $self->bind_host, $self->bind_port;
     my $tcp = tcp_server
                     $self->bind_host,
                     $self->bind_port,
