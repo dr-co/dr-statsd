@@ -219,7 +219,7 @@ sub _flush {
     my $to = AnyEvent::now();
     $to = int $to;
     if ($force) {
-        $to += 1_000_000;
+        $to += 1_000_000 + $self->_list->[-1][0];
     } else {
         $to -= $self->parent_lag;
         $to -= $self->truncate_timestamp;
