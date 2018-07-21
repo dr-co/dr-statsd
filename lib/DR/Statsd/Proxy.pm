@@ -20,6 +20,7 @@ use DR::Statsd::Proxy::Agg;
 use IO::Socket;
 use IO::Socket::INET;
 use Socket;
+use Data::Dumper;
 
 has parent_host     => is => 'ro', isa => 'Str', default => '127.0.0.1';
 has parent_port     => is => 'ro', isa => 'Str', default => 2003;
@@ -62,7 +63,7 @@ sub start {
     $self->_started(1);
 
 
-    printf 'Creating TCP-server: %s:%s', $self->bind_host, $self->bind_port;
+    DEBUGF 'Creating TCP-server: %s:%s', $self->bind_host, $self->bind_port;
     my $tcp = tcp_server
                     $self->bind_host,
                     $self->bind_port,
@@ -86,12 +87,15 @@ sub start {
 
 sub _aggregate {
     my ($self, $name, $value, $time, $proto) = @_;
-    #my $now = AnyEvent::now();
-    my $now = $time;
+    my $now = AnyEvent::now();
     if ($self->truncate_timestamp) {
         $time = int $time;
         $time -= $time % $self->truncate_timestamp;
+
+        $now = int $now;
+        $now -= $now % $self->truncate_timestamp;
     }
+    #my $now = $time;
     push @{ $self->_list } => [ $now, [ $name, $value, $time ] ];
 }
 
@@ -199,7 +203,7 @@ sub _flush {
 
     while (@{ $self->_list }) {
         my $f = $self->_list->[0];
-        last unless $to >= $f->[0];
+        last unless $f->[0] <= $to;
 
         $f = shift(@{ $self->_list })->[1];
 
@@ -223,7 +227,7 @@ sub _flush {
 
     for my $agg (values %{ $self->agg }) {
         my $list = $agg->flush;
-        $self->_send_parent($list);
+        $self->_send_parent($list, $to);
     }
     
 }
@@ -241,7 +245,7 @@ sub stop {
 }
 
 sub _send_parent {
-    my ($self, $list) = @_;
+    my ($self, $list, $to) = @_;
     return unless @$list;
     unless ($self->_fh) {
         my $fh = new IO::Socket::INET
@@ -261,7 +265,7 @@ sub _send_parent {
 
             my $m = shift @$list;
             last unless defined $m;
-            DEBUGF '%s %s %s', @$m;
+            DEBUGF '%s %s %s [%s]', @$m, $to;
             $pkt .= sprintf "%s %s %s\n", @$m;
         }
 
